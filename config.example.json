@@ -1,0 +1,22 @@
+{
+  "cvat": {
+    "url": "https://app.cvat.ai",
+    "api_key": "YOUR_API_KEY_HERE"
+  },
+  "organization": {
+    "id": 12345,
+    "slug": "your-org",
+    "name": "Your Organization"
+  },
+  "cloud_storage": {
+    "id": 1234,
+    "name": "Your Cloud Storage"
+  },
+  "files": {
+    "humansignal_json": "data/result.json"
+  },
+  "task": {
+    "name": "Hand Detection - HumanSignal Import"
+  },
+  "use_job_file_mapping": true
+}
