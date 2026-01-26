@@ -1,287 +1,299 @@
-# CVAT HumanSignal 自动化导入工具
+# HumanSignal to CVAT 数据转换工具
 
-自动化将HumanSignal导出的COCO格式数据导入到CVAT，并按session自动分组为jobs。
+自动化将 HumanSignal 导出的 COCO 格式数据导入到 CVAT，并按 session 自动分组为 jobs。
 
-## 功能特点
+## ✨ 功能特点
 
-- ✅ 自动创建CVAT任务
-- ✅ 按session自动分组创建jobs（232个session → 232个jobs）
-- ✅ 从AWS S3云存储自动加载图片
-- ✅ 自动上传标注数据
-- ✅ 生成job-session映射文件
+- ✅ 自动创建 CVAT 任务
+- ✅ 按 session 自动分组创建 jobs（272个 session → 272个 jobs）
+- ✅ 从云存储自动加载图片
+- ✅ 自动上传标注数据（支持 COCO 格式）
+- ✅ 生成 job-session 映射文件
 - ✅ 完整的错误检查和日志记录
 
-## 快速开始
+## 🚀 快速开始
 
-### 方法1：一键运行（推荐，自动配置虚拟环境）✨
-
-```bash
-./run_simple.sh
-```
-
-脚本会自动：
-- ✅ 创建虚拟环境（.venv）
-- ✅ 安装依赖（requests）
-- ✅ 运行配置向导
-- ✅ 测试连接
-- ✅ 执行导入
-
-### 方法2：手动配置虚拟环境
+### 1. 安装依赖
 
 ```bash
-# 1. 创建虚拟环境
-python3 -m venv .venv
-
-# 2. 激活虚拟环境
-source .venv/bin/activate
-
-# 3. 安装依赖
 pip install -r requirements.txt
-
-# 4. 准备数据
-mkdir -p data
-cp /path/to/result.json data/
-
-# 5. 配置
-python3 setup.py
-
-# 6. 测试连接
-python3 test_connection.py
-
-# 7. 运行导入
-python3 cvat_auto_import.py
-
-# 8. 退出虚拟环境
-deactivate
 ```
 
-### 方法3：使用 uv（如果已安装）
+### 2. 配置
+
+复制配置模板并填写你的信息：
 
 ```bash
-# 直接运行，无需配置虚拟环境
-uv run --no-project python3 setup.py
-uv run --no-project python3 test_connection.py
-uv run --no-project python3 cvat_auto_import.py
+cp config.example.json config.json
 ```
 
-> 💡 详细安装说明请查看 [INSTALL.md](INSTALL.md)
+编辑 `config.json`：
 
-## 输出文件
-# 4. 测试连接
-python3 test_connection.py
-
-# 5. 运行导入
-python3 cvat_auto_import.py
+```json
+{
+  "cvat": {
+    "url": "https://app.cvat.ai",
+    "api_key": "YOUR_API_KEY_HERE"
+  },
+  "organization": {
+    "id": 12345,
+    "slug": "your-org",
+    "name": "Your Organization"
+  },
+  "cloud_storage": {
+    "id": 1234,
+    "name": "Your Cloud Storage"
+  },
+  "files": {
+    "humansignal_json": "data/result.json"
+  },
+  "task": {
+    "name": "Hand Detection - HumanSignal Import"
+  },
+  "use_job_file_mapping": true
+}
 ```
 
-### 方法3：一键运行
+### 3. 准备数据
+
+将 HumanSignal 导出的 COCO 格式 JSON 文件放到 `data/` 目录：
 
 ```bash
-./run.sh
+cp /path/to/your/result.json data/
 ```
 
-脚本会自动检测 uv 并使用最佳方式运行。
-
-## uv 命令速查
+### 4. 运行导入
 
 ```bash
-# 配置
-uv run cvat-setup
-
-# 测试连接
-uv run cvat-test
-
-# 运行导入
-uv run cvat-import
-
-# 检查任务状态
-uv run cvat-check-status <task_id>
-
-# 检查导入错误
-uv run cvat-check-errors <task_id>
-
-# 生成映射文件
-uv run cvat-generate-mapping <task_id>
-
-# 上传标注到现有任务
-uv run python upload_annotations_only.py <task_id> <annotation_file>
+python cvat_auto_import.py
 ```
 
-详细说明请查看 `UV使用说明.md`
+## 📁 项目结构
 
-## 输出文件
+```
+HumanSignal2CVAT-translation/
+├── README.md                      # 本文件
+├── config.example.json            # 配置文件模板
+├── config.json                    # 你的配置（不会提交到 git）
+├── requirements.txt               # Python 依赖
+├── .gitignore                     # Git 忽略文件
+│
+├── cvat_auto_import.py            # 主程序：完整导入流程
+├── upload_annotations_only.py     # 单独上传标注到现有任务
+├── generate_job_mapping.py        # 生成 job-session 映射文件
+│
+├── data/                          # 数据目录
+│   ├── .gitkeep
+│   └── result.json               # HumanSignal 导出数据（不会提交）
+│
+├── logs/                          # 日志目录（自动生成）
+│   ├── .gitkeep
+│   ├── cvat_import_*.log         # 导入日志
+│   └── job_session_mapping_*.json # 映射文件
+│
+└── sample/                        # 示例数据
+    └── result.json               # 示例 COCO 格式数据
+```
+
+## 🛠️ 工具脚本
+
+### 主导入脚本
+
+```bash
+python cvat_auto_import.py
+```
+
+完整流程：
+1. 创建 CVAT 任务
+2. 按 session 分组图片
+3. 加载图片到任务（21,000+ 张，约 3-5 分钟）
+4. 上传标注数据（39,000+ 个标注）
+5. 生成 job-session 映射文件
+
+### 单独上传标注
+
+如果任务已创建，只需要上传标注：
+
+```bash
+python upload_annotations_only.py
+```
+
+会提示输入任务 ID。
+
+### 生成映射文件
+
+为现有任务生成 job-session 映射：
+
+```bash
+python generate_job_mapping.py
+```
+
+会提示输入任务 ID。
+
+## 📊 输出文件
 
 导入完成后会生成：
 
 - `logs/cvat_import_YYYYMMDD_HHMMSS.log` - 详细的导入日志
-- `logs/job_session_mapping_<task_id>.json` - job和session的映射（JSON格式）
-- `logs/job_session_mapping_<task_id>.csv` - job和session的映射（CSV格式，方便查看）
+- `logs/job_session_mapping_<task_id>.json` - job 和 session 的映射关系
 
-## 映射文件说明
+### 映射文件示例
 
-由于CVAT界面不显示session名称，我们生成映射文件来记录对应关系：
-
-**CSV格式示例：**
-```csv
-job_id,session_id,job_url,start_frame,stop_frame,frame_count,image_count
-3523456,13fa_session_20251203_090058,https://app.cvat.ai/tasks/1964457/jobs/3523456,0,129,130,130
-3523457,13fa_session_20251209_122213,https://app.cvat.ai/tasks/1964457/jobs/3523457,130,159,30,30
-```
-
-**使用方法：**
-1. 打开CSV文件
-2. 搜索session ID
-3. 点击 `job_url` 直接打开对应的标注页面
-
-## 工具脚本
-
-### 检查任务状态
-
-```bash
-uv run cvat-check-status <task_id>
-# 或
-python3 check_task_status.py <task_id>
-```
-
-### 生成映射文件
-
-如果需要为现有任务重新生成映射：
-
-```bash
-uv run cvat-generate-mapping <task_id>
-# 或
-python3 generate_job_mapping.py <task_id>
-```
-
-### 检查导入错误
-
-```bash
-uv run cvat-check-errors <task_id>
-# 或
-python3 check_import_errors.py <task_id>
-```
-
-### 上传标注到现有任务
-
-```bash
-python3 upload_annotations_only.py <task_id> <annotation_file>
-```
-
-## 项目结构
-
-```
-cvat-humansignal-import/
-├── README.md                    # 本文件
-├── QUICKSTART.md                # 快速开始指南
-├── UV使用说明.md                # uv详细使用说明
-├── 使用说明.md                  # 中文使用说明
-├── pyproject.toml               # uv项目配置
-├── requirements.txt             # Python依赖
-├── .gitignore                   # Git忽略文件
-├── config.example.json          # 配置文件模板
-├── run.sh                       # 一键运行脚本
-├── setup.py                     # 配置向导
-├── cvat_auto_import.py          # 主程序
-├── test_connection.py           # 连接测试
-├── check_task_status.py         # 任务状态检查
-├── generate_job_mapping.py      # 生成映射文件
-├── check_import_errors.py       # 错误检查
-├── upload_annotations_only.py   # 仅上传标注
-├── data/                        # 数据目录（需自行创建）
-│   └── result.json             # HumanSignal导出数据
-└── logs/                        # 日志目录（自动创建）
-    ├── cvat_import_*.log       # 导入日志
-    └── job_session_mapping_*.csv  # 映射文件
-```
-
-## 注意事项
-
-### 1. CVAT账号限制
-
-- 免费账号最多5个任务
-- 需要在组织中有相应权限
-- 云存储需要提前配置好
-
-### 2. 数据要求
-
-- HumanSignal导出的COCO格式JSON
-- 图片已上传到AWS S3（路径：`s3://fpv/test_1000/images/`）
-- 标签名称：Left hand, Partial left hand, Partial right hand, Right hand
-
-### 3. Session分组规则
-
-Session ID从文件名提取，格式：`{id}_session_{date}_{time}`
-
-例如：`7393_session_20251209_060300_671305_0000_000000.jpg`
-→ Session ID: `7393_session_20251209_060300`
-
-### 4. 执行时间
-
-- 任务创建：几秒
-- 图片加载：1-2分钟
-- 标注上传：1-2分钟
-- **总计：约5分钟**
-
-## 常见问题
-
-### Q: API Key在哪里获取？
-
-A: 
-1. 登录 https://app.cvat.ai/
-2. 点击右上角头像 → Account
-3. 找到 API Key 部分
-4. 复制或生成新的key
-
-### Q: 如何切换到组织工作区？
-
-A: 在CVAT界面，点击左上角的组织名称（如"wp"），确保不是"Personal workspace"。
-
-### Q: 标注导入失败怎么办？
-
-A: 
-1. 检查日志文件中的错误信息
-2. 运行 `uv run cvat-check-errors <task_id>` 查看详细错误
-3. 常见原因：图片路径不匹配、标签名称不一致
-
-### Q: 如何找到某个session对应的job？
-
-A: 打开 `logs/job_session_mapping_<task_id>.csv`，搜索session ID，点击对应的job_url。
-
-## 技术细节
-
-### 关键API调用
-
-1. **创建任务**：`POST /api/tasks?org=wp`
-2. **加载图片**：`POST /api/tasks/{id}/data` with `job_file_mapping`
-3. **上传标注**：`POST /api/tasks/{id}/annotations`
-
-### job_file_mapping参数
-
-这是实现按session分组的关键参数：
-
-```python
-job_file_mapping = [
-    ["path/to/session1/img1.jpg", "path/to/session1/img2.jpg"],  # Job 1
-    ["path/to/session2/img1.jpg", "path/to/session2/img2.jpg"],  # Job 2
-    ...
+```json
+[
+  {
+    "job_id": 3526678,
+    "session_id": "13fa_session_20251203_090058",
+    "start_frame": 0,
+    "stop_frame": 129,
+    "frame_count": 130,
+    "image_count": 130
+  },
+  {
+    "job_id": 3526679,
+    "session_id": "13fa_session_20251209_122213",
+    "start_frame": 130,
+    "stop_frame": 159,
+    "frame_count": 30,
+    "image_count": 30
+  }
 ]
 ```
 
-CVAT会根据这个映射创建对应数量的jobs。
+## ⚙️ 配置说明
 
-## 更新日志
+### CVAT API Key
 
-### v1.0 (2026-01-26)
-- ✅ 初始版本
-- ✅ 支持按session自动分组
-- ✅ 自动错误检查
-- ✅ 生成job-session映射文件
-- ✅ 支持uv包管理器
+1. 登录 https://app.cvat.ai/
+2. 点击右上角头像 → Account
+3. 找到 API Key 部分
+4. 复制或生成新的 key
 
-## 许可证
+### 组织信息
 
-内部使用
+- `id`: 组织 ID（数字）
+- `slug`: 组织短名称（URL 中使用）
+- `name`: 组织全名
 
-## 联系方式
+### 云存储
 
-如有问题请联系团队。
+需要提前在 CVAT 中配置好云存储：
+1. Settings → Cloud Storages
+2. 添加你的 S3/Azure/GCS 存储
+3. 记录存储 ID
+
+### 数据文件
+
+- `humansignal_json`: HumanSignal 导出的 COCO 格式 JSON 文件路径
+
+### 任务配置
+
+- `name`: CVAT 任务名称
+- `use_job_file_mapping`: 是否按 session 分组（建议设为 `true`）
+
+## 📝 数据格式要求
+
+### HumanSignal COCO 格式
+
+```json
+{
+  "images": [
+    {
+      "id": 0,
+      "file_name": "images/hash__session_id_timestamp.jpg",
+      "width": 1920,
+      "height": 1080
+    }
+  ],
+  "annotations": [
+    {
+      "id": 0,
+      "image_id": 0,
+      "category_id": 0,
+      "bbox": [x, y, width, height],
+      "area": 12345.67,
+      "iscrowd": 0
+    }
+  ],
+  "categories": [
+    {
+      "id": 0,
+      "name": "Left hand"
+    },
+    {
+      "id": 1,
+      "name": "Partial left hand"
+    },
+    {
+      "id": 2,
+      "name": "Partial right hand"
+    },
+    {
+      "id": 3,
+      "name": "Right hand"
+    }
+  ]
+}
+```
+
+### Session ID 提取规则
+
+从文件名提取 session ID：
+
+- 文件名格式：`hash__session_id_timestamp.jpg`
+- 提取规则：去掉 hash 前缀，取前 4 个下划线分隔的部分
+- 示例：`461ff0b4__3748_session_20251210_221855_834176_0002_000000.jpg`
+  → Session ID: `3748_session_20251210_221855`
+
+## ⚠️ 重要说明
+
+### Category ID 映射
+
+**CVAT 要求 category_id 从 1 开始，而不是从 0 开始！**
+
+脚本会自动处理这个转换：
+- HumanSignal: `category_id: 0, 1, 2, 3`
+- CVAT: `category_id: 1, 2, 3, 4`
+
+### 图片路径转换
+
+脚本会自动转换图片路径：
+- 原始：`images/hash__session_id.jpg`
+- 转换后：`test_1000/images/session_id.jpg`（去掉 hash 前缀）
+
+### 执行时间
+
+- 任务创建：几秒
+- 图片加载：3-5 分钟（21,000+ 张图片）
+- 标注上传：1-2 分钟（39,000+ 个标注）
+- **总计：约 5-10 分钟**
+
+## 🐛 常见问题
+
+### Q: 标注导入失败，提示 "annotation has no label"
+
+A: 这是因为 category_id 从 0 开始。脚本已经修复了这个问题，确保使用最新版本。
+
+### Q: 图片路径不匹配
+
+A: 检查云存储中的图片路径格式，确保与脚本中的路径转换逻辑一致。
+
+### Q: 如何找到某个 session 对应的 job？
+
+A: 打开 `logs/job_session_mapping_<task_id>.json`，搜索 session ID，找到对应的 job_id。
+
+### Q: 可以不按 session 分组吗？
+
+A: 可以，在 `config.json` 中设置 `"use_job_file_mapping": false`，所有图片会放在一个 job 中。
+
+## 📄 许可证
+
+MIT License
+
+## 👥 贡献
+
+欢迎提交 Issue 和 Pull Request！
+
+## 📧 联系方式
+
+如有问题请提交 Issue。
