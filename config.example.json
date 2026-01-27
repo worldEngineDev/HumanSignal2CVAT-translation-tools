@@ -10,7 +10,8 @@
   },
   "cloud_storage": {
     "id": 1234,
-    "name": "Your Cloud Storage"
+    "name": "Your Cloud Storage",
+    "prefix": "test_1000/images/"
   },
   "files": {
     "humansignal_json": "data/result.json"
@@ -18,5 +19,16 @@
   "task": {
     "name": "Hand Detection - HumanSignal Import"
   },
+  "labels": [
+    {"name": "Left hand", "color": "#ff00ff"},
+    {"name": "Partial left hand", "color": "#ff00ff"},
+    {"name": "Partial right hand", "color": "#ff00ff"},
+    {"name": "Right hand", "color": "#ff00ff"}
+  ],
+  "assignees": [
+    {"id": 123456, "name": "标注员1"},
+    {"id": 123457, "name": "标注员2"},
+    {"id": 123458, "name": "标注员3"}
+  ],
   "use_job_file_mapping": true
 }
