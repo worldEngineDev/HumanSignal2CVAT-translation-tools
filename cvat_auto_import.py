@@ -406,7 +406,12 @@ def auto_import_to_cvat(config_file='config.json'):
     
     cvat_url = config['cvat']['url']
     api_key = config['cvat']['api_key']
-    cloud_storage_id = config['cloud_storage']['id']
+    
+    # 使用旧桶配置（用于从旧平台迁移数据）
+    cloud_storage_config = config.get('cloud_storage_old', config.get('cloud_storage'))
+    cloud_storage_id = cloud_storage_config['id']
+    logger.info(f"   使用云存储: {cloud_storage_config.get('name', 'Unknown')} (ID: {cloud_storage_id})")
+    
     organization_slug = config.get('organization', {}).get('slug', 'wp')  # 使用slug而不是id
     input_json = config['files']['humansignal_json']
     task_name = config.get('task', {}).get('name', 'Hand Detection - HumanSignal Import')

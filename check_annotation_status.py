@@ -278,20 +278,61 @@ def check_annotation_status(config_file='config.json', task_ids=None):
         )
         
         if s3_files:
+            # 按 session 分组文件，检查是否有 json 文件（标志 session 完整）
+            logger.info(f"   检查 session 完整性（是否有 json 文件）...")
+            
+            session_files = defaultdict(lambda: {'images': [], 'has_json': False})
+            
+            for file_path in s3_files:
+                # 提取 session ID
+                # 路径格式: b1e0/session_20260108_034622_359267/0000/down/labels/xxx/frame_00089.jpg
+                parts = file_path.split('/')
+                session_id = None
+                for part in parts:
+                    if part.startswith('session_'):
+                        session_id = part
+                        break
+                
+                if not session_id:
+                    continue
+                
+                # 检查是否是 json 文件
+                if file_path.endswith('.json'):
+                    session_files[session_id]['has_json'] = True
+                elif file_path.endswith('.jpg') or file_path.endswith('.png'):
+                    session_files[session_id]['images'].append(file_path)
+            
+            # 只保留有 json 文件的完整 session
+            complete_sessions = {sid: data for sid, data in session_files.items() if data['has_json']}
+            incomplete_sessions = {sid: data for sid, data in session_files.items() if not data['has_json']}
+            
+            logger.info(f"   完整 session: {len(complete_sessions)} 个")
+            logger.info(f"   不完整 session（无json）: {len(incomplete_sessions)} 个")
+            
+            if incomplete_sessions:
+                logger.info(f"   不完整的 session 将被跳过:")
+                for sid in sorted(incomplete_sessions.keys())[:5]:
+                    img_count = len(incomplete_sessions[sid]['images'])
+                    logger.info(f"      - {sid}: {img_count} 张图片（无json文件）")
+                if len(incomplete_sessions) > 5:
+                    logger.info(f"      ... 还有 {len(incomplete_sessions) - 5} 个")
+            
+            # 构建 cloud_basenames 和 cloud_path_map（只包含完整 session 的图片）
             cloud_basenames = set()
             cloud_path_map = {}  # basename -> 完整路径的映射
             
-            for file_path in s3_files:
-                basename = file_path.split('/')[-1]
-                # 去掉hash前缀
-                if '__' in basename:
-                    basename = basename.split('__', 1)[1]
-                cloud_basenames.add(basename)
-                # 记录第一次出现的完整路径
-                if basename not in cloud_path_map:
-                    cloud_path_map[basename] = file_path
+            for session_id, data in complete_sessions.items():
+                for file_path in data['images']:
+                    basename = file_path.split('/')[-1]
+                    # 去掉hash前缀
+                    if '__' in basename:
+                        basename = basename.split('__', 1)[1]
+                    cloud_basenames.add(basename)
+                    # 记录第一次出现的完整路径
+                    if basename not in cloud_path_map:
+                        cloud_path_map[basename] = file_path
             
-            logger.info(f"✅ 云存储文件: {len(cloud_basenames)} 个")
+            logger.info(f"✅ 云存储文件（完整session）: {len(cloud_basenames)} 个")
         else:
             logger.warning("⚠️  无法从S3获取文件列表")
             cloud_path_map = {}

@@ -1,9 +1,0 @@
-b1e0_down_sbs_0000_bbox.json
-b1e0_down_sbs_0000_compensation_analysis.yaml
-frame_00089.jpg
-frame_00090.jpg
-frame_00094.jpg
-frame_00096.jpg
-frame_00097.jpg
-frame_00098.jpg
-index.yaml

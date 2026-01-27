@@ -1,3 +1,0 @@
-b1e0_down_sbs_0000_bbox.json
-b1e0_down_sbs_0000_compensation_analysis.yaml
-index.yaml
