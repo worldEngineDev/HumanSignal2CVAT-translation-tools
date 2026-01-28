@@ -196,14 +196,34 @@ class CVATClient:
 
 
 def extract_session_id(filename):
-    """提取session ID"""
+    """
+    提取 chunk ID
+    支持两种路径格式：
+    1. 旧格式: 461ff0b4__3748_session_20251210_221855_834176_0002_000000.jpg
+       Chunk ID: 3748_session_20251210_221855_834176_0002
+    2. 新格式: 23dc/session_20260121_200123_268461/0001/down/labels/23dc_down_sbs_0001_undetected_frames/frame_00000.jpg
+       Chunk ID: session_20260121_200123_268461_0001
+    """
+    # 先尝试从路径中提取 session_xxx/xxxx 格式
+    parts = filename.split('/')
+    for i, part in enumerate(parts):
+        if part.startswith('session_'):
+            # 找到 session 部分，取 session + 下一个部分（chunk编号）
+            if i + 1 < len(parts):
+                chunk_num = parts[i + 1]
+                return f"{part}_{chunk_num}"  # session_20260121_200123_268461_0001
+            else:
+                return part  # 只有 session，没有 chunk
+    
+    # 如果路径中没找到，尝试从文件名提取（旧格式）
     basename = filename.split('/')[-1]
     if '__' in basename:
         basename = basename.split('__', 1)[1]
     
     parts = basename.split('_')
-    if len(parts) >= 4 and 'session' in basename:
-        return '_'.join(parts[:4])
+    if len(parts) >= 6 and 'session' in basename:
+        return '_'.join(parts[:6])  # 3748_session_20251210_221855_834176_0002
+    
     return None
 
 
