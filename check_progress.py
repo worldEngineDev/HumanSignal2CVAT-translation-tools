@@ -107,27 +107,34 @@ class CVATClient:
             logger.error(f"❌ 获取组织成员失败: {e}")
             return []
     
-    def get_job_has_annotations(self, job_id):
-        """检查job是否有标注（只检查数量，不获取全部数据）"""
+    def get_job_annotations_count(self, job_id):
+        """获取job的标注数量和已标注帧数"""
         url = f'{self.base_url}/api/jobs/{job_id}/annotations'
         
         try:
-            # 只获取第一页，检查是否有数据
-            response = requests.get(url, headers=self.headers, params={'page_size': 1}, timeout=30)
+            response = requests.get(url, headers=self.headers, timeout=30)
             response.raise_for_status()
             data = response.json()
             
-            # 检查是否有shapes或tracks
-            has_shapes = len(data.get('shapes', [])) > 0
-            has_tracks = len(data.get('tracks', [])) > 0
+            shapes = data.get('shapes', [])
+            tracks = data.get('tracks', [])
             
-            return has_shapes or has_tracks
+            # 统计有标注的帧（去重）
+            annotated_frames = set()
+            for shape in shapes:
+                annotated_frames.add(shape.get('frame'))
+            for track in tracks:
+                # track的shapes里也有frame
+                for shape in track.get('shapes', []):
+                    annotated_frames.add(shape.get('frame'))
+            
+            return len(shapes), len(tracks), len(annotated_frames)
         except requests.exceptions.Timeout:
             logger.debug(f"检查job {job_id}超时")
-            return False
+            return 0, 0, 0
         except requests.exceptions.RequestException as e:
             logger.debug(f"检查job {job_id}失败: {e}")
-            return False
+            return 0, 0, 0
 
 
 def format_duration(seconds):
@@ -209,15 +216,13 @@ def check_progress(config_file='config.json', task_ids=None, show_details=False)
     all_stats = []
     user_stats = defaultdict(lambda: {
         'total_jobs': 0,
-        'new': 0,
-        'in_progress': 0,
         'completed': 0,
-        'validation': 0,
-        'accepted': 0,
-        'rejected': 0,
+        'in_progress': 0,
+        'not_started': 0,
         'total_frames': 0,
-        'completed_frames': 0,
-        'total_duration': 0
+        'annotated_frames': 0,
+        'completed_jobs': 0,
+        'total_shapes': 0
     })
     
     for task in tasks:
@@ -238,19 +243,27 @@ def check_progress(config_file='config.json', task_ids=None, show_details=False)
         logger.info(f"   → Jobs数: {len(jobs)}")
         logger.info(f"   → 检查标注状态（并发）...")
         
-        # 并发检查每个job是否有标注
+        # 并发检查每个job的标注数量
         def check_job(job):
             job_id = job.get('id')
-            has_annotations = client.get_job_has_annotations(job_id)
-            return job_id, has_annotations
+            start_frame = job.get('start_frame', 0)
+            stop_frame = job.get('stop_frame', 0)
+            frame_count = stop_frame - start_frame + 1
+            shapes, tracks, annotated_frames = client.get_job_annotations_count(job_id)
+            return job_id, shapes, tracks, annotated_frames, frame_count
         
         job_annotations = {}
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = {executor.submit(check_job, job): job for job in jobs}
             completed = 0
             for future in as_completed(futures):
-                job_id, has_annotations = future.result()
-                job_annotations[job_id] = has_annotations
+                job_id, shapes, tracks, annotated_frames, frame_count = future.result()
+                job_annotations[job_id] = {
+                    'shapes': shapes, 
+                    'tracks': tracks, 
+                    'annotated_frames': annotated_frames,
+                    'frame_count': frame_count
+                }
                 completed += 1
                 if completed % 10 == 0 or completed == len(jobs):
                     logger.info(f"      进度: {completed}/{len(jobs)} jobs")
@@ -276,16 +289,25 @@ def check_progress(config_file='config.json', task_ids=None, show_details=False)
             stop_frame = job.get('stop_frame', 0)
             frame_count = stop_frame - start_frame + 1
             
-            # 检查这个job是否有实际标注
-            has_annotations = job_annotations.get(job_id, False)
+            # 获取标注数量
+            ann_info = job_annotations.get(job_id, {'shapes': 0, 'tracks': 0, 'annotated_frames': 0, 'frame_count': frame_count})
+            shapes_count = ann_info['shapes']
+            tracks_count = ann_info['tracks']
+            annotated_frames = ann_info['annotated_frames']
             
-            # 统计job状态
-            task_stats['job_stats'][state] += 1
+            # 统计job状态（基于已标注帧数判断）
+            if annotated_frames == 0:
+                actual_state = 'not_started'
+            elif annotated_frames >= frame_count:
+                actual_state = 'completed'
+            else:
+                actual_state = 'in_progress'
+            
+            task_stats['job_stats'][actual_state] += 1
             task_stats['total_frames'] += frame_count
             
-            # 如果有实际标注数据，计入完成帧数
-            if has_annotations:
-                task_stats['completed_frames'] += frame_count
+            # 计入已标注帧数（精确统计）
+            task_stats['completed_frames'] += annotated_frames
             
             # 统计每个标注人员的情况
             if assignee:
@@ -294,19 +316,26 @@ def check_progress(config_file='config.json', task_ids=None, show_details=False)
                 assignee_name = user_map.get(assignee_id, assignee_username or f"User_{assignee_id}")
                 
                 task_stats['assignee_stats'][assignee_name]['total'] += 1
-                task_stats['assignee_stats'][assignee_name][state] += 1
+                task_stats['assignee_stats'][assignee_name][actual_state] += 1
                 task_stats['assignee_stats'][assignee_name]['frames'] += frame_count
+                task_stats['assignee_stats'][assignee_name]['annotated_frames'] = \
+                    task_stats['assignee_stats'][assignee_name].get('annotated_frames', 0) + annotated_frames
+                task_stats['assignee_stats'][assignee_name]['shapes'] = \
+                    task_stats['assignee_stats'][assignee_name].get('shapes', 0) + shapes_count
                 
                 # 全局统计
                 user_stats[assignee_name]['total_jobs'] += 1
-                user_stats[assignee_name][state] += 1
+                user_stats[assignee_name][actual_state] += 1
                 user_stats[assignee_name]['total_frames'] += frame_count
+                user_stats[assignee_name]['annotated_frames'] = \
+                    user_stats[assignee_name].get('annotated_frames', 0) + annotated_frames
+                user_stats[assignee_name]['total_shapes'] = \
+                    user_stats[assignee_name].get('total_shapes', 0) + shapes_count
                 
-                # 如果有实际标注数据，计入完成
-                if has_annotations:
-                    user_stats[assignee_name]['completed_frames'] += frame_count
-                    task_stats['assignee_stats'][assignee_name]['has_annotations'] = \
-                        task_stats['assignee_stats'][assignee_name].get('has_annotations', 0) + 1
+                # 完成的job数
+                if actual_state == 'completed':
+                    user_stats[assignee_name]['completed_jobs'] = \
+                        user_stats[assignee_name].get('completed_jobs', 0) + 1
         
         all_stats.append(task_stats)
     
@@ -321,7 +350,7 @@ def check_progress(config_file='config.json', task_ids=None, show_details=False)
         logger.info(f"   任务状态: {task_stat['task_status']}")
         logger.info(f"   总Jobs数: {task_stat['total_jobs']}")
         logger.info(f"   总帧数: {task_stat['total_frames']}")
-        logger.info(f"   完成帧数: {task_stat['completed_frames']} ({task_stat['completed_frames']*100//task_stat['total_frames'] if task_stat['total_frames'] > 0 else 0}%)")
+        logger.info(f"   已标注帧: {task_stat['completed_frames']} ({task_stat['completed_frames']*100//task_stat['total_frames'] if task_stat['total_frames'] > 0 else 0}%)")
         
         # Job状态分布
         logger.info(f"\n   Job状态分布:")
@@ -334,18 +363,18 @@ def check_progress(config_file='config.json', task_ids=None, show_details=False)
             logger.info(f"\n   标注人员进度:")
             for assignee, stats in sorted(task_stat['assignee_stats'].items()):
                 total = stats['total']
-                # 使用实际标注数据判断完成情况
-                has_annotations = stats.get('has_annotations', 0)
+                completed = stats.get('completed', 0)
                 in_progress = stats.get('in_progress', 0)
-                new = stats.get('new', 0)
+                not_started = stats.get('not_started', 0)
                 frames = stats.get('frames', 0)
+                annotated_frames = stats.get('annotated_frames', 0)
+                shapes = stats.get('shapes', 0)
                 
-                completion_rate = has_annotations * 100 // total if total > 0 else 0
+                frame_rate = annotated_frames * 100 // frames if frames > 0 else 0
                 
                 logger.info(f"     👤 {assignee}:")
-                logger.info(f"        总任务: {total} | 实际完成: {has_annotations} ({completion_rate}%)")
-                logger.info(f"        进行中: {in_progress} | 未开始: {new}")
-                logger.info(f"        总帧数: {frames}")
+                logger.info(f"        Jobs: {completed}完成/{in_progress}进行中/{not_started}未开始 (共{total})")
+                logger.info(f"        帧数: {annotated_frames}/{frames} ({frame_rate}%) | 标注数: {shapes}")
     
     # 7. 全局标注人员统计
     logger.info("\n" + "="*80)
@@ -356,34 +385,31 @@ def check_progress(config_file='config.json', task_ids=None, show_details=False)
         # 按完成率排序
         sorted_users = sorted(
             user_stats.items(),
-            key=lambda x: (x[1]['completed'] + x[1]['accepted']) / x[1]['total_jobs'] if x[1]['total_jobs'] > 0 else 0,
+            key=lambda x: x[1].get('annotated_frames', 0) / x[1]['total_frames'] if x[1]['total_frames'] > 0 else 0,
             reverse=True
         )
         
         for assignee, stats in sorted_users:
             total = stats['total_jobs']
-            # 用实际标注判断完成
-            completed = stats.get('completed_frames', 0) // (stats['total_frames'] // stats['total_jobs']) if stats['total_frames'] > 0 else 0
-            # 简化：有completed_frames就算完成的jobs
-            actual_completed_jobs = sum(1 for _ in range(stats['total_jobs']) if stats.get('completed_frames', 0) > 0)
-            
-            in_progress = stats['in_progress']
-            new = stats['new']
+            completed_jobs = stats.get('completed_jobs', 0)
+            in_progress = stats.get('in_progress', 0)
+            not_started = stats.get('not_started', 0)
             total_frames = stats['total_frames']
-            completed_frames = stats['completed_frames']
+            annotated_frames = stats.get('annotated_frames', 0)
+            total_shapes = stats.get('total_shapes', 0)
             
-            completion_rate = completed_frames * 100 // total_frames if total_frames > 0 else 0
+            frame_completion_rate = annotated_frames * 100 // total_frames if total_frames > 0 else 0
             
             logger.info(f"\n👤 {assignee}:")
-            logger.info(f"   总任务: {total}")
-            logger.info(f"   已完成帧数: {completed_frames}/{total_frames} ({completion_rate}%)")
-            logger.info(f"   进行中: {in_progress} | 未开始: {new}")
+            logger.info(f"   Jobs: {completed_jobs}完成/{in_progress}进行中/{not_started}未开始 (共{total})")
+            logger.info(f"   帧数: {annotated_frames}/{total_frames} ({frame_completion_rate}%)")
+            logger.info(f"   标注数: {total_shapes}")
             
-            # 进度条
+            # 进度条（基于帧完成率）
             bar_length = 40
-            filled = int(bar_length * completion_rate / 100)
+            filled = int(bar_length * frame_completion_rate / 100)
             bar = '█' * filled + '░' * (bar_length - filled)
-            logger.info(f"   进度: [{bar}] {completion_rate}%")
+            logger.info(f"   进度: [{bar}] {frame_completion_rate}%")
     else:
         sorted_users = []
         logger.info("   未找到已分配的任务")
@@ -423,14 +449,19 @@ def check_progress(config_file='config.json', task_ids=None, show_details=False)
         
         for assignee, stats in sorted_users:
             total = stats['total_jobs']
+            completed_jobs = stats.get('completed_jobs', 0)
+            in_progress = stats.get('in_progress', 0)
+            not_started = stats.get('not_started', 0)
             total_frames = stats['total_frames']
-            completed_frames = stats.get('completed_frames', 0)
+            annotated_frames = stats.get('annotated_frames', 0)
+            total_shapes = stats.get('total_shapes', 0)
             
-            completion_rate = completed_frames * 100 // total_frames if total_frames > 0 else 0
+            frame_rate = annotated_frames * 100 // total_frames if total_frames > 0 else 0
             
             f.write(f"\n{assignee}:\n")
-            f.write(f"  总任务: {total}\n")
-            f.write(f"  完成帧数: {completed_frames}/{total_frames} ({completion_rate}%)\n")
+            f.write(f"  Jobs: {completed_jobs}完成/{in_progress}进行中/{not_started}未开始 (共{total})\n")
+            f.write(f"  帧数: {annotated_frames}/{total_frames} ({frame_rate}%)\n")
+            f.write(f"  标注数: {total_shapes}\n")
         
         f.write("\n" + "="*60 + "\n")
         f.write(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")

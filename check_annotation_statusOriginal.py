@@ -129,38 +129,6 @@ class CVATClient:
             return False
 
 
-def extract_chunk_id(filename):
-    """
-    提取 chunk ID
-    支持两种路径格式：
-    1. 旧格式: 461ff0b4__3748_session_20251210_221855_834176_0002_000000.jpg
-       Chunk ID: 3748_session_20251210_221855_834176_0002
-    2. 新格式: 23dc/session_20260121_200123_268461/0001/down/labels/.../frame_00000.jpg
-       Chunk ID: session_20260121_200123_268461_0001
-    """
-    # 先尝试从路径中提取 session_xxx/xxxx 格式
-    parts = filename.split('/')
-    for i, part in enumerate(parts):
-        if part.startswith('session_'):
-            # 找到 session 部分，取 session + 下一个部分（chunk编号）
-            if i + 1 < len(parts):
-                chunk_num = parts[i + 1]
-                return f"{part}_{chunk_num}"
-            else:
-                return part
-    
-    # 如果路径中没找到，尝试从文件名提取（旧格式）
-    basename = filename.split('/')[-1]
-    if '__' in basename:
-        basename = basename.split('__', 1)[1]
-    
-    parts = basename.split('_')
-    if len(parts) >= 6 and 'session' in basename:
-        return '_'.join(parts[:6])
-    
-    return 'unknown'
-
-
 def list_s3_files(bucket_name, prefix, aws_access_key_id=None, aws_secret_access_key=None, region_name='us-east-1', account_id=None):
     """列举S3/R2存储桶中的文件
     
@@ -230,11 +198,7 @@ def list_s3_files(bucket_name, prefix, aws_access_key_id=None, aws_secret_access
                     # 只要文件，不要目录
                     if not key.endswith('/'):
                         files.append(key)
-                        # 动态显示扫描进度（终端原地刷新）
-                        print(f"\r   正在扫描... {len(files)} 个文件", end='', flush=True)
         
-        # 换行，结束动态显示
-        print()
         logger.info(f"✅ 找到 {len(files)} 个文件")
         return files
         
@@ -314,61 +278,20 @@ def check_annotation_status(config_file='config.json', task_ids=None):
         )
         
         if s3_files:
-            # 按 session 分组文件，检查是否有 json 文件（标志 session 完整）
-            logger.info(f"   检查 session 完整性（是否有 json 文件）...")
-            
-            session_files = defaultdict(lambda: {'images': [], 'has_json': False})
-            
-            for file_path in s3_files:
-                # 提取 session ID
-                # 路径格式: b1e0/session_20260108_034622_359267/0000/down/labels/xxx/frame_00089.jpg
-                parts = file_path.split('/')
-                session_id = None
-                for part in parts:
-                    if part.startswith('session_'):
-                        session_id = part
-                        break
-                
-                if not session_id:
-                    continue
-                
-                # 检查是否是 json 文件
-                if file_path.endswith('.json'):
-                    session_files[session_id]['has_json'] = True
-                elif file_path.endswith('.jpg') or file_path.endswith('.png'):
-                    session_files[session_id]['images'].append(file_path)
-            
-            # 只保留有 json 文件的完整 session
-            complete_sessions = {sid: data for sid, data in session_files.items() if data['has_json']}
-            incomplete_sessions = {sid: data for sid, data in session_files.items() if not data['has_json']}
-            
-            logger.info(f"   完整 session: {len(complete_sessions)} 个")
-            logger.info(f"   不完整 session（无json）: {len(incomplete_sessions)} 个")
-            
-            if incomplete_sessions:
-                logger.info(f"   不完整的 session 将被跳过:")
-                for sid in sorted(incomplete_sessions.keys())[:5]:
-                    img_count = len(incomplete_sessions[sid]['images'])
-                    logger.info(f"      - {sid}: {img_count} 张图片（无json文件）")
-                if len(incomplete_sessions) > 5:
-                    logger.info(f"      ... 还有 {len(incomplete_sessions) - 5} 个")
-            
-            # 构建 cloud_basenames 和 cloud_path_map（只包含完整 session 的图片）
             cloud_basenames = set()
             cloud_path_map = {}  # basename -> 完整路径的映射
             
-            for session_id, data in complete_sessions.items():
-                for file_path in data['images']:
-                    basename = file_path.split('/')[-1]
-                    # 去掉hash前缀
-                    if '__' in basename:
-                        basename = basename.split('__', 1)[1]
-                    cloud_basenames.add(basename)
-                    # 记录第一次出现的完整路径
-                    if basename not in cloud_path_map:
-                        cloud_path_map[basename] = file_path
+            for file_path in s3_files:
+                basename = file_path.split('/')[-1]
+                # 去掉hash前缀
+                if '__' in basename:
+                    basename = basename.split('__', 1)[1]
+                cloud_basenames.add(basename)
+                # 记录第一次出现的完整路径
+                if basename not in cloud_path_map:
+                    cloud_path_map[basename] = file_path
             
-            logger.info(f"✅ 云存储文件（完整session）: {len(cloud_basenames)} 个")
+            logger.info(f"✅ 云存储文件: {len(cloud_basenames)} 个")
         else:
             logger.warning("⚠️  无法从S3获取文件列表")
             cloud_path_map = {}
@@ -510,44 +433,17 @@ def check_annotation_status(config_file='config.json', task_ids=None):
             'not_annotated_images': sorted(list(loaded_not_annotated)),
         }
         
-        # 生成新数据文件列表（按chunk分组，过滤超过2000张的chunk）
+        # 生成新数据文件列表
         if new_images:
-            # 按chunk分组
-            from collections import defaultdict
-            chunk_files = defaultdict(list)
+            new_images_file = log_dir / f'new_images_{datetime.now().strftime("%Y%m%d_%H%M%S")}.txt'
+            with open(new_images_file, 'w', encoding='utf-8') as f:
+                for img in sorted(new_images):
+                    # 使用完整的云存储路径
+                    full_path = cloud_path_map.get(img, f"{prefix}{img}")
+                    f.write(f"{full_path}\n")
             
-            for img in new_images:
-                full_path = cloud_path_map.get(img, f"{prefix}{img}")
-                chunk_id = extract_chunk_id(full_path)
-                chunk_files[chunk_id].append(full_path)
-            
-            # 过滤超过2000张的chunk
-            valid_files = []
-            skipped_chunks = []
-            for chunk_id, files in chunk_files.items():
-                if len(files) > 2000:
-                    skipped_chunks.append((chunk_id, len(files)))
-                else:
-                    valid_files.extend(files)
-            
-            if skipped_chunks:
-                logger.warning(f"\n⚠️  跳过 {len(skipped_chunks)} 个超大chunk（>2000张）:")
-                for chunk_id, count in skipped_chunks[:5]:
-                    logger.warning(f"      - {chunk_id}: {count} 张")
-                if len(skipped_chunks) > 5:
-                    logger.warning(f"      ... 还有 {len(skipped_chunks) - 5} 个")
-            
-            if valid_files:
-                new_images_file = log_dir / f'new_images_{datetime.now().strftime("%Y%m%d_%H%M%S")}.txt'
-                with open(new_images_file, 'w', encoding='utf-8') as f:
-                    for full_path in sorted(valid_files):
-                        f.write(f"{full_path}\n")
-                
-                logger.info(f"\n✅ 新数据列表已保存: {new_images_file}")
-                logger.info(f"   有效文件: {len(valid_files)} 个（来自 {len(chunk_files) - len(skipped_chunks)} 个chunk）")
-                logger.info(f"💡 下一步: 使用 import_new_data.py 导入新数据")
-            else:
-                logger.warning(f"\n⚠️  所有chunk都超过2000张，没有可导入的数据")
+            logger.info(f"\n✅ 新数据列表已保存: {new_images_file}")
+            logger.info(f"💡 下一步: 使用 import_new_data.py 导入新数据")
     else:
         # 只有CVAT数据
         logger.info(f"\n📊 CVAT标注状态:")
