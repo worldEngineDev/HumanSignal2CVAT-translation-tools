@@ -191,6 +191,10 @@ def check_progress(config_file='config.json', task_ids=None, show_details=False)
         # 获取所有任务
         tasks = client.get_all_tasks(organization_slug)
     
+    # 排除旧平台任务
+    EXCLUDED_TASKS = {1967925}
+    tasks = [t for t in tasks if t['id'] not in EXCLUDED_TASKS]
+    
     if not tasks:
         logger.warning("⚠️  未找到任何任务")
         return
@@ -222,7 +226,8 @@ def check_progress(config_file='config.json', task_ids=None, show_details=False)
         'total_frames': 0,
         'annotated_frames': 0,
         'completed_jobs': 0,
-        'total_shapes': 0
+        'total_shapes': 0,
+        'speeds': []  # 存储每个job的速度，用于计算平均
     })
     
     for task in tasks:
@@ -323,6 +328,21 @@ def check_progress(config_file='config.json', task_ids=None, show_details=False)
                 task_stats['assignee_stats'][assignee_name]['shapes'] = \
                     task_stats['assignee_stats'][assignee_name].get('shapes', 0) + shapes_count
                 
+                # 计算速度（帧/小时）
+                assigned_date = job.get('assignee_updated_date') or job.get('created_date')
+                updated_date = job.get('updated_date')
+                if assigned_date and updated_date and annotated_frames > 0:
+                    try:
+                        from datetime import datetime as dt
+                        assigned_dt = dt.fromisoformat(assigned_date.replace('Z', '+00:00'))
+                        updated_dt = dt.fromisoformat(updated_date.replace('Z', '+00:00'))
+                        hours = (updated_dt - assigned_dt).total_seconds() / 3600
+                        if hours > 0:
+                            speed = annotated_frames / hours
+                            user_stats[assignee_name]['speeds'].append(speed)
+                    except:
+                        pass
+                
                 # 全局统计
                 user_stats[assignee_name]['total_jobs'] += 1
                 user_stats[assignee_name][actual_state] += 1
@@ -397,6 +417,8 @@ def check_progress(config_file='config.json', task_ids=None, show_details=False)
             total_frames = stats['total_frames']
             annotated_frames = stats.get('annotated_frames', 0)
             total_shapes = stats.get('total_shapes', 0)
+            speeds = stats.get('speeds', [])
+            avg_speed = sum(speeds) / len(speeds) if speeds else None
             
             frame_completion_rate = annotated_frames * 100 // total_frames if total_frames > 0 else 0
             
@@ -404,6 +426,7 @@ def check_progress(config_file='config.json', task_ids=None, show_details=False)
             logger.info(f"   Jobs: {completed_jobs}完成/{in_progress}进行中/{not_started}未开始 (共{total})")
             logger.info(f"   帧数: {annotated_frames}/{total_frames} ({frame_completion_rate}%)")
             logger.info(f"   标注数: {total_shapes}")
+            logger.info(f"   平均速度: {avg_speed:.1f} 帧/小时" if avg_speed else "   平均速度: N/A")
             
             # 进度条（基于帧完成率）
             bar_length = 40

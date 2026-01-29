@@ -387,6 +387,10 @@ def check_annotation_status(config_file='config.json', task_ids=None):
         # 获取所有任务
         tasks = cvat_client.get_all_tasks(organization_slug)
     
+    # 排除旧平台任务
+    EXCLUDED_TASKS = {1967925}
+    tasks = [t for t in tasks if t['id'] not in EXCLUDED_TASKS]
+    
     if not tasks:
         logger.warning("⚠️  未找到任何任务")
         cvat_images = set()

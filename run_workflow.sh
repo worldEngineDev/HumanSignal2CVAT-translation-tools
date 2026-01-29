@@ -50,9 +50,10 @@ show_menu() {
     echo "4. 从云存储导入新数据"
     echo "5. 列出标注人员（更新配置）"
     echo "6. 查看最新报告"
+    echo "7. 检查每日绩效（速度统计）"
     echo "0. 退出"
     echo ""
-    echo -n "请选择操作 [0-6]: "
+    echo -n "请选择操作 [0-7]: "
 }
 
 # 1. 从旧平台迁移
@@ -216,6 +217,26 @@ list_annotators() {
     fi
 }
 
+# 7. 检查每日绩效
+check_daily_performance() {
+    print_info "检查标注人员每日绩效..."
+    echo ""
+    
+    $PYTHON check_daily_performance.py
+    
+    if [ $? -eq 0 ]; then
+        print_success "绩效检查完成"
+        
+        # 显示CSV位置
+        latest_csv=$(ls -t reports/daily_performance_*.csv 2>/dev/null | head -1)
+        if [ -n "$latest_csv" ]; then
+            print_info "CSV报告: $latest_csv"
+        fi
+    else
+        print_error "绩效检查失败，请查看日志"
+    fi
+}
+
 # 6. 查看最新报告
 view_reports() {
     echo ""
@@ -309,6 +330,9 @@ main() {
                 ;;
             6)
                 view_reports
+                ;;
+            7)
+                check_daily_performance
                 ;;
             0)
                 print_info "退出"
