@@ -353,29 +353,21 @@ def check_annotation_status(config_file='config.json', task_ids=None):
                 if len(incomplete_sessions) > 5:
                     logger.info(f"      ... 还有 {len(incomplete_sessions) - 5} 个")
             
-            # 构建 cloud_basenames 和 cloud_path_map（只包含完整 session 的图片）
-            cloud_basenames = set()
-            cloud_path_map = {}  # basename -> 完整路径的映射
+            # 构建 cloud_files（完整路径集合，只包含完整 session 的图片）
+            cloud_files = set()
             
             for session_id, data in complete_sessions.items():
                 for file_path in data['images']:
-                    basename = file_path.split('/')[-1]
-                    # 去掉hash前缀
-                    if '__' in basename:
-                        basename = basename.split('__', 1)[1]
-                    cloud_basenames.add(basename)
-                    # 记录第一次出现的完整路径
-                    if basename not in cloud_path_map:
-                        cloud_path_map[basename] = file_path
+                    cloud_files.add(file_path)
             
-            logger.info(f"✅ 云存储文件（完整session）: {len(cloud_basenames)} 个")
+            logger.info(f"✅ 云存储文件（完整session）: {len(cloud_files)} 个")
         else:
             logger.warning("⚠️  无法从S3获取文件列表")
-            cloud_path_map = {}
+            cloud_files = None
     else:
         logger.warning("⚠️  未配置S3，将只统计CVAT中的数据")
         logger.info("💡 在config.json中添加s3配置：")
-        cloud_path_map = {}
+        cloud_files = None
     
     # 4. 获取CVAT中的所有任务和图片
     logger.info(f"\n📋 获取CVAT任务列表...")
@@ -412,13 +404,12 @@ def check_annotation_status(config_file='config.json', task_ids=None):
             
             logger.info(f"\n[{idx}/{len(tasks)}] 处理任务: {task_name} (ID: {task_id})")
             
-            # 获取任务图片列表
+            # 获取任务图片列表（完整路径）
             images = cvat_client.get_task_data(task_id)
-            image_basenames = []
+            image_paths = []
             for img_path in images:
-                basename = extract_basename(img_path)
-                cvat_images.add(basename)
-                image_basenames.append(basename)
+                cvat_images.add(img_path)
+                image_paths.append(img_path)
             
             logger.info(f"   → 图片数: {len(images)}")
             
@@ -472,8 +463,8 @@ def check_annotation_status(config_file='config.json', task_ids=None):
                     annotated_job_count += 1
                     # 将这个job的所有帧标记为已标注
                     for frame_idx in range(result['start_frame'], result['stop_frame'] + 1):
-                        if frame_idx < len(image_basenames):
-                            cvat_annotated_images.add(image_basenames[frame_idx])
+                        if frame_idx < len(image_paths):
+                            cvat_annotated_images.add(image_paths[frame_idx])
             
             logger.info(f"   ✓ 已标注jobs: {annotated_job_count}/{len(jobs)}")
         
@@ -486,12 +477,12 @@ def check_annotation_status(config_file='config.json', task_ids=None):
     
     loaded_not_annotated = cvat_images - cvat_annotated_images
     
-    if cloud_basenames is not None:
+    if cloud_files is not None:
         # 有云存储数据，进行对比
-        new_images = cloud_basenames - cvat_images
+        new_images = cloud_files - cvat_images
         
         logger.info(f"\n📊 对比结果:")
-        logger.info(f"   云存储总文件: {len(cloud_basenames)}")
+        logger.info(f"   云存储总文件: {len(cloud_files)}")
         logger.info(f"   已加载到CVAT: {len(cvat_images)}")
         logger.info(f"   CVAT已标注: {len(cvat_annotated_images)}")
         logger.info(f"   已加载未标注: {len(loaded_not_annotated)}")
@@ -499,7 +490,7 @@ def check_annotation_status(config_file='config.json', task_ids=None):
         
         result = {
             'summary': {
-                'cloud_total': len(cloud_basenames),
+                'cloud_total': len(cloud_files),
                 'cvat_loaded': len(cvat_images),
                 'cvat_annotated': len(cvat_annotated_images),
                 'cvat_not_annotated': len(loaded_not_annotated),
@@ -515,8 +506,7 @@ def check_annotation_status(config_file='config.json', task_ids=None):
             # 按chunk分组
             chunk_files = defaultdict(list)
             
-            for img in new_images:
-                full_path = cloud_path_map.get(img, f"{prefix}{img}")
+            for full_path in new_images:
                 chunk_id = extract_chunk_id(full_path)
                 chunk_files[chunk_id].append(full_path)
             
