@@ -513,7 +513,6 @@ def check_annotation_status(config_file='config.json', task_ids=None):
         # 生成新数据文件列表（按chunk分组，过滤超过2000张的chunk）
         if new_images:
             # 按chunk分组
-            from collections import defaultdict
             chunk_files = defaultdict(list)
             
             for img in new_images:
