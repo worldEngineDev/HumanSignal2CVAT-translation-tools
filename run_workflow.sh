@@ -21,6 +21,39 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
+# 列出所有任务
+list_tasks() {
+    $PYTHON -c "
+import json
+import requests
+
+with open('config.json') as f:
+    config = json.load(f)
+
+url = config['cvat']['url'].rstrip('/') + '/api/tasks'
+headers = {'Authorization': 'Token ' + config['cvat']['api_key']}
+params = {'page_size': 100, 'org': config.get('organization', {}).get('slug', '')}
+
+try:
+    resp = requests.get(url, headers=headers, params=params, timeout=30)
+    resp.raise_for_status()
+    tasks = resp.json().get('results', [])
+    
+    # 排除旧平台任务
+    tasks = [t for t in tasks if t['id'] != 1967925]
+    
+    print('\\n📋 任务列表:')
+    print('-' * 60)
+    for t in sorted(tasks, key=lambda x: x['id'], reverse=True):
+        status = t.get('status', '')
+        size = t.get('size', 0)
+        print(f\"  {t['id']}  {t['name'][:40]:<40}  [{size}张]\")
+    print('-' * 60)
+except Exception as e:
+    print(f'获取任务列表失败: {e}')
+"
+}
+
 print_info() {
     echo -e "${BLUE}ℹ️  $1${NC}"
 }
@@ -44,16 +77,23 @@ show_menu() {
     echo "  CVAT 工作流程"
     echo "=========================================="
     echo ""
-    echo "1. 从旧平台迁移数据（HumanSignal → CVAT）"
-    echo "2. 核对云存储和标注状态"
-    echo "3. 检查标注人员完成情况"
-    echo "4. 从云存储导入新数据"
-    echo "5. 列出标注人员（更新配置）"
-    echo "6. 查看最新报告"
-    echo "7. 检查每日绩效（速度统计）"
-    echo "0. 退出"
+    echo "【数据管理】"
+    echo "  1. 从旧平台迁移数据（HumanSignal → CVAT）"
+    echo "  2. 核对云存储和标注状态"
+    echo "  3. 从云存储导入新数据"
     echo ""
-    echo -n "请选择操作 [0-7]: "
+    echo "【进度监控】"
+    echo "  4. 检查标注人员完成情况"
+    echo "  5. 检查每日绩效（速度统计）"
+    echo "  6. 查看最新报告"
+    echo ""
+    echo "【人员管理】"
+    echo "  7. 刷新标注人员列表"
+    echo "  8. 动态分配未开始的Jobs"
+    echo ""
+    echo "  0. 退出"
+    echo ""
+    echo -n "请选择操作 [0-8]: "
 }
 
 # 1. 从旧平台迁移
@@ -109,6 +149,7 @@ check_status() {
     read choice
     
     if [ "$choice" = "2" ]; then
+        list_tasks
         echo -n "请输入任务ID（多个ID用空格分隔）: "
         read task_ids
         $PYTHON check_annotation_status.py $task_ids
@@ -143,6 +184,7 @@ check_progress() {
     read choice
     
     if [ "$choice" = "2" ]; then
+        list_tasks
         echo -n "请输入任务ID（多个ID用空格分隔）: "
         read task_ids
         $PYTHON check_progress.py $task_ids
@@ -237,6 +279,32 @@ check_daily_performance() {
     fi
 }
 
+# 8. 动态分配未开始的Jobs
+reassign_jobs() {
+    print_info "动态分配未开始的Jobs..."
+    echo ""
+    echo "选择处理范围:"
+    echo "1. 处理所有任务"
+    echo "2. 处理指定任务"
+    echo -n "请选择 [1-2]: "
+    read choice
+    
+    if [ "$choice" = "2" ]; then
+        list_tasks
+        echo -n "请输入任务ID（多个ID用空格分隔）: "
+        read task_ids
+        $PYTHON reassign_jobs.py $task_ids
+    else
+        $PYTHON reassign_jobs.py
+    fi
+    
+    if [ $? -eq 0 ]; then
+        print_success "分配完成"
+    else
+        print_error "分配失败，请查看日志"
+    fi
+}
+
 # 6. 查看最新报告
 view_reports() {
     echo ""
@@ -320,19 +388,22 @@ main() {
                 check_status
                 ;;
             3)
-                check_progress
-                ;;
-            4)
                 import_new_data
                 ;;
+            4)
+                check_progress
+                ;;
             5)
-                list_annotators
+                check_daily_performance
                 ;;
             6)
                 view_reports
                 ;;
             7)
-                check_daily_performance
+                list_annotators
+                ;;
+            8)
+                reassign_jobs
                 ;;
             0)
                 print_info "退出"
