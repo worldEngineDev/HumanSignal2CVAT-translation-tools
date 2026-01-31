@@ -186,10 +186,10 @@ def reassign_jobs(config_file='config.json', task_ids=None):
     tasks = [t for t in tasks if t['id'] not in EXCLUDED_TASKS]
     logger.info(f"✅ 找到 {len(tasks)} 个任务")
     
-    # 4. 扫描jobs，统计每个人的工作量
+    # 4. 扫描jobs，统计每个人的工作量（按帧数）
     logger.info("\n🔍 扫描Jobs状态...")
     unstarted_jobs = []
-    user_started_jobs = defaultdict(int)  # 每个人已开始的jobs数量（不能动的）
+    user_started_frames = defaultdict(int)  # 每个人已开始的帧数（不能动的）
     
     for task in tasks:
         task_id = task['id']
@@ -213,6 +213,7 @@ def reassign_jobs(config_file='config.json', task_ids=None):
                 job, annotated = future.result()
                 assignee = job.get('assignee')
                 assignee_id = assignee.get('id') if assignee else None
+                frame_count = job.get('stop_frame', 0) - job.get('start_frame', 0) + 1
                 
                 if annotated == 0:
                     # 未开始的job，可以重新分配
@@ -222,13 +223,14 @@ def reassign_jobs(config_file='config.json', task_ids=None):
                         'task_name': task_name,
                         'start_frame': job.get('start_frame', 0),
                         'stop_frame': job.get('stop_frame', 0),
+                        'frame_count': frame_count,
                         'current_assignee': assignee.get('username') if assignee else None,
                         'current_assignee_id': assignee_id
                     })
                 else:
-                    # 已开始的job，统计到对应人员
+                    # 已开始的job，统计帧数到对应人员
                     if assignee_id:
-                        user_started_jobs[assignee_id] += 1
+                        user_started_frames[assignee_id] += frame_count
     
     if not unstarted_jobs:
         logger.info("\n✅ 没有未开始的Jobs需要分配")
@@ -237,11 +239,12 @@ def reassign_jobs(config_file='config.json', task_ids=None):
     logger.info(f"\n📊 找到 {len(unstarted_jobs)} 个未开始的Jobs")
     
     # 5. 显示未开始的jobs
+    total_unstarted_frames = sum(j['frame_count'] for j in unstarted_jobs)
     logger.info("\n未开始的Jobs列表:")
     for idx, job in enumerate(unstarted_jobs):
-        frame_count = job['stop_frame'] - job['start_frame'] + 1
         current = job['current_assignee'] or '未分配'
-        logger.info(f"   {idx+1}. Job {job['job_id']} ({frame_count}帧) - 当前: {current}")
+        logger.info(f"   {idx+1}. Job {job['job_id']} ({job['frame_count']}帧) - 当前: {current}")
+    logger.info(f"   共 {len(unstarted_jobs)} 个Jobs, {total_unstarted_frames} 帧")
     
     # 6. 显示所有成员，让用户选择参与分配的人
     print("\n" + "="*50)
@@ -271,61 +274,48 @@ def reassign_jobs(config_file='config.json', task_ids=None):
     
     logger.info(f"\n✅ 参与分配的人员 ({len(selected_assignees)} 人): {[a['name'] for a in selected_assignees]}")
     
-    # 7. 计算平均分配方案
-    # 统计选中人员当前已开始的jobs数量（annotated > 0 的，不能动）
+    # 7. 按帧数平均分配
+    # 统计选中人员当前已开始的帧数
     assignee_workload = {}
     for a in selected_assignees:
-        started = user_started_jobs.get(a['id'], 0)
-        assignee_workload[a['id']] = {'name': a['name'], 'started': started, 'will_assign': 0}
+        started_frames = user_started_frames.get(a['id'], 0)
+        assignee_workload[a['id']] = {
+            'name': a['name'], 
+            'started_frames': started_frames, 
+            'assigned_frames': 0,
+            'assigned_jobs': []
+        }
     
-    # 计算总jobs数和目标平均值
-    total_started = sum(w['started'] for w in assignee_workload.values())
-    total_jobs = total_started + len(unstarted_jobs)
-    target_per_person = total_jobs // len(selected_assignees)
-    remainder = total_jobs % len(selected_assignees)
+    # 计算总帧数和目标平均值
+    total_started_frames = sum(w['started_frames'] for w in assignee_workload.values())
+    total_frames = total_started_frames + total_unstarted_frames
+    target_frames_per_person = total_frames // len(selected_assignees)
     
-    logger.info(f"\n📊 分配计算:")
-    logger.info(f"   已开始的Jobs（不可动）: {total_started}")
-    logger.info(f"   未开始的Jobs（可分配）: {len(unstarted_jobs)}")
-    logger.info(f"   总Jobs: {total_jobs}")
-    logger.info(f"   目标每人: {target_per_person} ~ {target_per_person + 1}")
+    logger.info(f"\n📊 分配计算（按帧数）:")
+    logger.info(f"   已开始的帧数（不可动）: {total_started_frames}")
+    logger.info(f"   未开始的帧数（可分配）: {total_unstarted_frames}")
+    logger.info(f"   总帧数: {total_frames}")
+    logger.info(f"   目标每人: ~{target_frames_per_person} 帧")
     
-    # 计算每个人的目标数量
-    # 先按当前已开始数量排序（多的在前，他们的目标会先被分配）
-    sorted_by_started = sorted(selected_assignees, key=lambda a: user_started_jobs.get(a['id'], 0), reverse=True)
+    # 按帧数从大到小排序未开始的jobs（大的先分配，更容易平均）
+    unstarted_jobs_sorted = sorted(unstarted_jobs, key=lambda j: j['frame_count'], reverse=True)
     
-    targets = {}
-    remaining_target = total_jobs
-    remaining_people = len(selected_assignees)
-    
-    for a in sorted_by_started:
-        started = user_started_jobs.get(a['id'], 0)
-        # 这个人的目标 = 剩余总数 / 剩余人数（向上取整给前面的人）
-        avg = remaining_target // remaining_people
-        extra = 1 if remaining_target % remaining_people > 0 else 0
+    # 贪心分配：每次把job分给当前帧数最少的人
+    for job in unstarted_jobs_sorted:
+        # 找当前总帧数最少的人
+        min_person = min(selected_assignees, 
+                        key=lambda a: assignee_workload[a['id']]['started_frames'] + assignee_workload[a['id']]['assigned_frames'])
         
-        # 如果已开始的已经超过目标，就只保留已开始的
-        target = max(started, avg + extra)
-        targets[a['id']] = target
-        
-        remaining_target -= target
-        remaining_people -= 1
+        assignee_workload[min_person['id']]['assigned_frames'] += job['frame_count']
+        assignee_workload[min_person['id']]['assigned_jobs'].append(job)
     
-    # 计算每个人需要分配多少
-    for a in selected_assignees:
-        started = user_started_jobs.get(a['id'], 0)
-        target = targets[a['id']]
-        need = target - started
-        assignee_workload[a['id']]['target'] = target
-        assignee_workload[a['id']]['need'] = need
-    
-    # 显示分配预览（按需要分配数量排序，多的在前）
-    sorted_assignees = sorted(selected_assignees, key=lambda a: assignee_workload[a['id']]['need'], reverse=True)
-    
+    # 显示分配预览
     logger.info(f"\n📋 分配预览:")
-    for a in sorted_assignees:
+    for a in selected_assignees:
         w = assignee_workload[a['id']]
-        logger.info(f"   {w['name']}: 已开始 {w['started']} + 将分配 {w['need']} = {w['target']}")
+        total = w['started_frames'] + w['assigned_frames']
+        jobs_count = len(w['assigned_jobs'])
+        logger.info(f"   {w['name']}: 已有 {w['started_frames']}帧 + 分配 {w['assigned_frames']}帧 ({jobs_count}个jobs) = {total}帧")
     
     # 8. 确认分配
     print(f"\n确认按上述方案分配？(y/n): ", end='')
@@ -334,28 +324,21 @@ def reassign_jobs(config_file='config.json', task_ids=None):
         logger.info("❌ 取消分配")
         return
     
-    # 9. 执行分配（按需分配给每个人）
+    # 9. 执行分配
     logger.info("\n🚀 开始分配...")
     success_count = 0
     fail_count = 0
-    job_index = 0
     
-    for a in sorted_assignees:
+    for a in selected_assignees:
         w = assignee_workload[a['id']]
-        need = w['need']
-        
-        for _ in range(need):
-            if job_index >= len(unstarted_jobs):
-                break
-            job = unstarted_jobs[job_index]
+        for job in w['assigned_jobs']:
             try:
                 client.assign_job(job['job_id'], a['id'])
-                logger.info(f"   ✓ Job {job['job_id']} → {a['name']}")
+                logger.info(f"   ✓ Job {job['job_id']} ({job['frame_count']}帧) → {a['name']}")
                 success_count += 1
             except Exception as e:
                 logger.error(f"   ✗ Job {job['job_id']} 分配失败: {e}")
                 fail_count += 1
-            job_index += 1
     
     # 10. 完成
     logger.info("\n" + "="*60)

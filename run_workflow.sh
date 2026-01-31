@@ -91,9 +91,14 @@ show_menu() {
     echo "  7. 刷新标注人员列表"
     echo "  8. 动态分配未开始的Jobs"
     echo ""
+    echo "【预标注】"
+    echo "  9. 导入预标注（从云存储）"
+    echo "  10. 查看预标注统计"
+    echo "  11. 对比预标注与人工标注"
+    echo ""
     echo "  0. 退出"
     echo ""
-    echo -n "请选择操作 [0-8]: "
+    echo -n "请选择操作 [0-11]: "
 }
 
 # 1. 从旧平台迁移
@@ -259,23 +264,45 @@ list_annotators() {
     fi
 }
 
-# 7. 检查每日绩效
+# 5. 检查每日绩效
 check_daily_performance() {
     print_info "检查标注人员每日绩效..."
     echo ""
+    echo "选择操作:"
+    echo "1. 查询今天"
+    echo "2. 查询指定日期"
+    echo "3. 补录快照（建立基准点）"
+    echo -n "请选择 [1-3]: "
+    read choice
     
-    $PYTHON check_daily_performance.py
+    case $choice in
+        1)
+            $PYTHON check_daily_performance.py
+            ;;
+        2)
+            echo -n "请输入日期 (格式 YYYYMMDD): "
+            read target_date
+            $PYTHON check_daily_performance.py $target_date
+            ;;
+        3)
+            echo -n "请输入要补录的日期 (格式 YYYYMMDD): "
+            read target_date
+            $PYTHON check_daily_performance.py $target_date --snapshot
+            ;;
+        *)
+            print_error "无效的选择"
+            return
+            ;;
+    esac
     
     if [ $? -eq 0 ]; then
-        print_success "绩效检查完成"
-        
-        # 显示CSV位置
+        print_success "操作完成"
         latest_csv=$(ls -t reports/daily_performance_*.csv 2>/dev/null | head -1)
         if [ -n "$latest_csv" ]; then
             print_info "CSV报告: $latest_csv"
         fi
     else
-        print_error "绩效检查失败，请查看日志"
+        print_error "操作失败，请查看日志"
     fi
 }
 
@@ -302,6 +329,68 @@ reassign_jobs() {
         print_success "分配完成"
     else
         print_error "分配失败，请查看日志"
+    fi
+}
+
+# 9. 导入预标注
+import_preannotations() {
+    print_info "导入预标注..."
+    echo ""
+    list_tasks
+    echo -n "请输入任务ID: "
+    read task_id
+    
+    if [ -z "$task_id" ]; then
+        print_error "未输入任务ID"
+        return
+    fi
+    
+    $PYTHON import_preannotations.py $task_id
+    
+    if [ $? -eq 0 ]; then
+        print_success "导入完成"
+    else
+        print_error "导入失败，请查看日志"
+    fi
+}
+
+# 10. 查看预标注统计
+check_preannotations() {
+    print_info "查看云存储预标注统计..."
+    echo ""
+    
+    $PYTHON check_preannotations.py
+    
+    if [ $? -eq 0 ]; then
+        print_success "统计完成"
+        print_info "汇总: reports/preannotation_summary.csv"
+        print_info "详情: reports/preannotation_details.json"
+    else
+        print_error "统计失败，请查看日志"
+    fi
+}
+
+# 11. 对比预标注与人工标注
+compare_annotations() {
+    print_info "对比预标注与人工标注状态..."
+    echo ""
+    
+    # 检查预标注数据是否存在
+    if [ ! -f "reports/preannotation_details.json" ]; then
+        print_warning "预标注数据不存在，先运行选项10生成..."
+        $PYTHON check_preannotations.py
+    fi
+    
+    $PYTHON compare_annotations.py
+    
+    if [ $? -eq 0 ]; then
+        print_success "对比完成"
+        latest_csv=$(ls -t reports/annotation_comparison_*.csv 2>/dev/null | head -1)
+        if [ -n "$latest_csv" ]; then
+            print_info "CSV报告: $latest_csv"
+        fi
+    else
+        print_error "对比失败，请查看日志"
     fi
 }
 
@@ -404,6 +493,15 @@ main() {
                 ;;
             8)
                 reassign_jobs
+                ;;
+            9)
+                import_preannotations
+                ;;
+            10)
+                check_preannotations
+                ;;
+            11)
+                compare_annotations
                 ;;
             0)
                 print_info "退出"
